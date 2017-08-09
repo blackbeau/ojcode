@@ -1,6 +1,7 @@
 #!/bin/sh
 # $1 Ini file path
 iniFile=$1
+isUndoOperation=true
 iniTempFile=""
 lvrtConfigFile="/etc/init.d/lvrt-wrapper"    #  "/etc/init.d/lvrt-wrapper"
 niMaxIniFile="/etc/natinst/share/ni-rt.ini"
@@ -28,7 +29,7 @@ AddIniToken()
       sed -i "${tokenLineNumber}c\\$2=$3" $1
   else
       echo "add $2 token"
-      sed -i "${defaultLineNumberToInsert}a\\${2}=${3}" $1
+      sed -i "${defaultLineNumberToInsert}a\\$2=$3" $1
   fi
 }
 
@@ -40,7 +41,14 @@ CheckINIFileAndUpdate()
     AddIniToken $1 Debugging True $lvtrString
     AddIniToken $1 numstatusitemstolog 99999 $lvtrString
 }
-
+UndoINIFile()
+{
+  AddIniToken $1 DWarnDialogMultiples False $lvtrString
+  AddIniToken $1 promoteDWarnInternals False $lvtrString
+  AddIniToken $1 DPrintfLogging False $lvtrString
+  AddIniToken $1 Debugging False $lvtrString
+  AddIniToken $1 numstatusitemstolog 0 $lvtrString
+}
 CheckNIMaxINIFileAndUpdate()
 {
     AddIniToken $1 SafeMode.enabled False $sysString
@@ -48,7 +56,7 @@ CheckNIMaxINIFileAndUpdate()
     AddIniToken $1 ConsoleOut.enabled True $sysString
 }
 
-IncreaseThreadSizeAndDumpFileSize()
+SetThreadSizeAndDumpFileSize()
 {
   local defaultLineNumberToInsert
   local tokenLineNumber
@@ -60,12 +68,36 @@ IncreaseThreadSizeAndDumpFileSize()
       sed -i "${tokenLineNumber}c\\$2 $3" $1
   else
       echo "add $2 token"
-      sed -i "${defaultLineNumberToInsert}a\\${2} ${3}" $1
+      sed -i "${defaultLineNumberToInsert}a\\$2 $3" $1
   fi
 }
 
-CheckINIFileAndUpdate $iniFile
-CheckNIMaxINIFileAndUpdate $niMaxIniFile
-IncreaseThreadSizeAndDumpFileSize $lvrtConfigFile "ulimit -s" 512
-IncreaseThreadSizeAndDumpFileSize $lvrtConfigFile "ulimit -c" unlimited
-reboot
+IncreaseThreadSizeAndDumpFileSize()
+{
+  setThreadSizeAndDumpFileSize $lvrtConfigFile "ulimit -s" 512
+  setThreadSizeAndDumpFileSize $lvrtConfigFile "ulimit -c" unlimited
+}
+UndoIncreaseThreadSizeAndDumpFileSize()
+{
+  setThreadSizeAndDumpFileSize $lvrtConfigFile "ulimit -s" 256
+  setThreadSizeAndDumpFileSize $lvrtConfigFile "ulimit -c" 4096
+}
+undoAllOperation(){
+  UndoINIFile
+  UndoIncreaseThreadSizeAndDumpFileSize
+}
+
+if [ $isUndoOperation = "false" ];then
+  echo "false"
+  CheckINIFileAndUpdate $iniFile
+  CheckNIMaxINIFileAndUpdate $niMaxIniFile
+  IncreaseThreadSizeAndDumpFileSize
+  reboot
+else
+  echo "true"
+  undoAllOperation
+fi
+# CheckINIFileAndUpdate $iniFile
+# CheckNIMaxINIFileAndUpdate $niMaxIniFile
+# IncreaseThreadSizeAndDumpFileSize
+# reboot
