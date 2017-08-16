@@ -31,9 +31,11 @@ Param(
     [switch]
     [alias("enable")]
     $EnableDebugSettings,
-    [string]
+    [switch]
     [alias("disable")]
     $DisableDebugSettings,
+    [switch]
+    $HostMachine,
     [string]
     $Tokens,
     [string]
@@ -62,11 +64,11 @@ $script:plinkPath = $script:scriptPath+"/plink.exe"
 $script:ConfigPath = $script:scriptPath+"/config.xml"
 $script:ConfigTable = Import-Clixml $script:ConfigPath
 $script:TokensConstTable = @{
-  "DWarnDialogMultiples"="True";
-  "promoteDWarnInternals"="True";
-  "DPrintfLogging"="True";
-  "Debugging"="True";
-  "numstatusitemstolog"="99999"
+  "DWarnDialogMultiples"  = @{$True="True";$False="False"};
+  "promoteDWarnInternals" = @{$True="True";$False="False"};
+  "DPrintfLogging"        = @{$True="True";$False="False"};
+  "Debugging"             = @{$True="True";$False="False"};
+  "numstatusitemstolog"   = @{$True="99999";$False="1000"};
 }
 
 function SaveConfig()
@@ -120,21 +122,21 @@ Write-Debug ("LabVIEW version: "+$script:labViewVersion.split(" ")[-1])
 
 if( -not $script:ConfigTable["LabVIEWInstallationFolder"])
 {
-  ConfigTable["LabVIEWInstallationFolder"]=$script:iniFilePrefix+$script:labViewVersion
+  $script:ConfigTable["LabVIEWInstallationFolder"]=$script:iniFilePrefix+$script:labViewVersion
 }
 
 if( -not $script:ConfigTable["DefaultLogFileDropFolder "])
 {
-  ConfigTable["DefaultLogFileDropFolder "]="c:\temp"
+  $script:ConfigTable["DefaultLogFileDropFolder"]="c:\temp"
 }
 
-$script:iniFilePath=ConfigTable["LabVIEWInstallationFolder"]+"\LabVIEW.ini"
+$script:iniFilePath=$script:ConfigTable["LabVIEWInstallationFolder"]+"\LabVIEW.ini"
 Write-Debug ("Ini file path: "+$script:iniFilePath)
 
-$script:iniTempFilePath=ConfigTable["LabVIEWInstallationFolder"]+"\temp"
+$script:iniTempFilePath=$script:ConfigTable["LabVIEWInstallationFolder"]+"\temp"
 New-Item $script:iniTempFilePath -force -type file | Out-Null
 
-$script:LabVIEWExecutePath=ConfigTable["LabVIEWInstallationFolder"]+"\LabVIEW.exe"
+$script:LabVIEWExecutePath=$script:ConfigTable["LabVIEWInstallationFolder"]+"\LabVIEW.exe"
 
 function GetTokenLine($token)
 {
@@ -237,7 +239,6 @@ else {$matchrex=$token}
                 $_
            }
   } | Set-Content $script:iniTempFilePath  -ErrorAction Stop
-
  return $isTokenFind
 }
 
@@ -250,32 +251,27 @@ function AddOneToken($token,$value)
     }
 }
 
-function CheckINIFileAndUpdateV2($isUndo)
+function CheckINIFileAndUpdateV2($tokenTable,$enable)
 {
  try
    {
-    echo $isUndo
-    if($isUndo)
-    {
-     $iniTokenFlag="False"
-     $iniTokenNum="0"
-    }
-    else
-    {
-     $iniTokenFlag="True"
-     $iniTokenNum="99999"
-    }
+
     Get-Content  $script:iniFilePath -ErrorAction Stop | Set-Content $script:iniTempFilePath -ErrorAction Stop
 
-    AddOneToken  DWarnDialogMultiples $iniTokenFlag
+    foreach($token in $tokenTable.keys)
+    {
+    AddOneToken $token $tokenTable[$token][$enable]
+    }
 
-    AddOneToken  promoteDWarnInternals $iniTokenFlag
-
-    AddOneToken  DPrintfLogging $iniTokenFlag
-
-    AddOneToken  Debugging $iniTokenFlag
-
-    AddOneToken  numstatusitemstolog $iniTokenNum
+    #AddOneToken  DWarnDialogMultiples $iniTokenFlag
+    #
+    #AddOneToken  promoteDWarnInternals $iniTokenFlag
+    #
+    #AddOneToken  DPrintfLogging $iniTokenFlag
+    #
+    #AddOneToken  Debugging $iniTokenFlag
+    #
+    #AddOneToken  numstatusitemstolog $iniTokenNum
 
     cp $script:iniTempFilePath $script:iniFilePath -ErrorAction Stop
     Write-Debug ("Write temp back to ini file: "+$?)
@@ -421,12 +417,32 @@ if($Restart)
     "TargetRunTime" {ValidateSSHAdress RestartTargetRunTime; break;}
   }
 }
-
-if($EnableDebugSetting.isPresent)
+if($EnableDebugSettings.isPresent)
 {
-  if($host.isPresent){
-
+  if($HostMachine.isPresent){
     if($Tokens)
+    {
+      CheckINIFileAndUpdateV2 @{$Tokens=$script:TokensConstTable[$Tokens]} $True
+    }
+    else
+    {
+      CheckINIFileAndUpdateV2 $script:TokensConstTable $True
+    }
+
+  }
+}
+if($DisableDebugSettings.isPresent)
+{
+  if($HostMachine.isPresent){
+    if($Tokens)
+    {
+      CheckINIFileAndUpdateV2 @{$Tokens=$script:TokensConstTable[$Tokens]} $False
+    }
+    else
+    {
+      echo "????"
+      CheckINIFileAndUpdateV2 $script:TokensConstTable $False
+    }
 
   }
 }
