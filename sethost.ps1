@@ -25,7 +25,6 @@ http://kevinpelgrims.wordpress.com
   #  [alias("tar")]
   #  $Target,
   #  [alias("pa")]
-  #  $Path)
 
 Param(
     [switch]
@@ -35,9 +34,17 @@ Param(
     [alias("disable")]
     $DisableDebugSettings,
     [switch]
+    $ALL,
+    [switch]
+    $Target,
+    [switch]
     $HostMachine,
     [string]
     $Tokens,
+    [string]
+    $RunTimeStackSize,
+    [string]
+    $CoreDumpSize,
     [string]
     $Restart,
     [switch]
@@ -60,6 +67,7 @@ Param(
 
 $script:scriptPath = Split-Path -Parent $MyInvocation.MyCommand.Definition
 $script:setRTPath = $script:scriptPath+"/setRT.txt"
+$script:setRTTempPath = $script:scriptPath+"/setRTTemp.txt"
 $script:plinkPath = $script:scriptPath+"/plink.exe"
 $script:ConfigPath = $script:scriptPath+"/config.xml"
 $script:ConfigTable = Import-Clixml $script:ConfigPath
@@ -364,6 +372,12 @@ function RestartLabVIEW()
   }
   Start-Process $script:LabVIEWExecutePath
 }
+
+function prepareForSetRTTempfile()
+{
+  Copy-Item $script:setRTPath $script:setRTTempPath -force
+  Add-Content $script:setRTTempPath "iniFile=/"$script:bashIniFile/""
+}
 #if($RebootRT.isPresent)
 #{
 #  ValidateSSHAdress RestartTarget
@@ -428,6 +442,27 @@ if($EnableDebugSettings.isPresent)
     {
       CheckINIFileAndUpdateV2 $script:TokensConstTable $True
     }
+  }
+  elseif($Target.isPresent)
+  {
+    if($Tokens){
+      Add-Content $script:setRTTempPath "EnableINITokens $Tokens"
+    }
+    elseif($RunTimeStackSize){
+      Add-Content $script:setRTTempPath "IncreaseThreadSizeAndDumpFileSize Stack"
+    }
+    elseif($CoreDumpSize){
+      Add-Content $script:setRTTempPath "IncreaseThreadSizeAndDumpFileSize CoreDump"
+    }
+    else{
+      Add-Content $script:setRTTempPath "EnableINITokens`t
+                                         IncreaseThreadSizeAndDumpFileSize"
+    }
+  }
+  else {
+    CheckINIFileAndUpdateV2 $script:TokensConstTable $True
+    Add-Content $script:setRTTempPath "EnableINITokens`t
+                                       IncreaseThreadSizeAndDumpFileSize"
 
   }
 }
@@ -440,9 +475,30 @@ if($DisableDebugSettings.isPresent)
     }
     else
     {
-      echo "????"
       CheckINIFileAndUpdateV2 $script:TokensConstTable $False
     }
+  }
+  elseif($Target.isPresent)
+  {
+    if($Tokens){
+      Add-Content $script:setRTTempPath "DisableINITokens $Tokens"
+    }
+    elseif($RunTimeStackSize){
+      Add-Content $script:setRTTempPath "UndoIncreaseThreadSizeAndDumpFileSize Stack"
+    }
+    elseif($CoreDumpSize){
+      Add-Content $script:setRTTempPath "UndoIncreaseThreadSizeAndDumpFileSize CoreDump"
+    }
+    else{
+      Add-Content $script:setRTTempPath "DisableINITokens`t
+                                         UndoIncreaseThreadSizeAndDumpFileSize"
+    }
+
+  }
+  else {
+    CheckINIFileAndUpdateV2 $script:TokensConstTable $False
+    Add-Content $script:setRTTempPath "DisableINITokens`t
+                                       UndoIncreaseThreadSizeAndDumpFileSize"
 
   }
 }
