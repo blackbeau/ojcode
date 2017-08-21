@@ -1,6 +1,6 @@
 #!/bin/bash
 # $1 Ini file path
-iniFile=$1
+iniFile="/etc/natinst/share/lvrt.conf"
 isUndoOperation=true
 iniTempFile=""
 lvrtConfigFile="/etc/init.d/lvrt-wrapper"    #  "/etc/init.d/lvrt-wrapper"
@@ -17,6 +17,12 @@ declare -A constDisableTokenTable=( [DWarnDialogMultiples]=False
                             [DPrintfLogging]=False
                             [Debugging]=False
                             [numstatusitemstolog]=1000 )
+declare -A constEnableNiMaxTokenTable=( [SafeMode.enabled]=True
+                                   [sshd.enabled]=True
+                                   [ConsoleOut.enabled]=True )
+declare -A constDisableNiMaxTokenTable=( [SafeMode.enabled]=False
+                                   [sshd.enabled]=False
+                                   [ConsoleOut.enabled]=False )
 GetTokenLine()
 {
   grep  -n  "$2"   $1  | cut  -d  ":"  -f  1
@@ -53,10 +59,6 @@ EnableINITokens()
       done
   fi
     # AddIniToken $1 DWarnDialogMultiples True $lvtrString
-    # AddIniToken $1 promoteDWarnInternals True $lvtrString
-    # AddIniToken $1 DPrintfLogging True $lvtrString
-    # AddIniToken $1 Debugging True $lvtrString
-    # AddIniToken $1 numstatusitemstolog 99999 $lvtrString
 }
 DisableINITokens()
 {
@@ -69,11 +71,32 @@ DisableINITokens()
       done
   fi
   # AddIniToken $1 DWarnDialogMultiples False $lvtrString
-  # AddIniToken $1 promoteDWarnInternals False $lvtrString
-  # AddIniToken $1 DPrintfLogging False $lvtrString
-  # AddIniToken $1 Debugging False $lvtrString
-  # AddIniToken $1 numstatusitemstolog 0 $lvtrString
 }
+
+EnableNiMaxTokens()
+{
+  if [ -n "$1" ]; then
+    AddIniToken $niMaxIniFile $1 ${constEnableNiMaxTokenTable[$1]} $sysString
+  else
+      for key in "${!constEnableNiMaxTokenTable[@]}"
+      do
+        AddIniToken $niMaxIniFile $key ${constEnableNiMaxTokenTable[$key]} $sysString
+      done
+  fi
+}
+
+DisableNiMaxTokens()
+{
+  if [ -n "$1" ]; then
+    AddIniToken $niMaxIniFile $1 ${constDisableNiMaxTokenTable[$1]} $sysString
+  else
+      for key in "${!constDisableNiMaxTokenTable[@]}"
+      do
+        AddIniToken $niMaxIniFile $key ${constDisableNiMaxTokenTable[$key]} $sysString
+      done
+  fi
+}
+
 CheckNIMaxINIFileAndUpdate()
 {
     AddIniToken $1 SafeMode.enabled False $sysString
@@ -81,9 +104,8 @@ CheckNIMaxINIFileAndUpdate()
     AddIniToken $1 ConsoleOut.enabled True $sysString
 }
 
-SetThreadSizeAndDumpFileSize()
+SetUlimitSize()
 {
-  echo $1
   local defaultLineNumberToInsert
   local tokenLineNumber
   defaultLineNumberToInsert=`GetTokenLine $1 "$2"`
@@ -98,33 +120,16 @@ SetThreadSizeAndDumpFileSize()
   fi
 }
 
-IncreaseThreadSizeAndDumpFileSize()
+SetThreadSizeAndDumpFileSize()
 {
   if [ "$1" = "Stack" ];then
-      SetThreadSizeAndDumpFileSize $lvrtConfigFile "ulimit -s" $2
+      SetUlimitSize $lvrtConfigFile "ulimit -s" $2
   elif [ "$1" = "CoreDump" ];then
-      SetThreadSizeAndDumpFileSize $lvrtConfigFile "ulimit -c" $2
-  else
-    SetThreadSizeAndDumpFileSize $lvrtConfigFile "ulimit -s" 512
-    SetThreadSizeAndDumpFileSize $lvrtConfigFile "ulimit -c" unlimited
+      SetUlimitSize $lvrtConfigFile "ulimit -c" $2
   fi
 }
 
-UndoIncreaseThreadSizeAndDumpFileSize()
-{
-  if [ "$1" = "Stack" ];then
-      SetThreadSizeAndDumpFileSize $lvrtConfigFile "ulimit -s" $2
-  elif [ "$1" = "CoreDump" ];then
-      SetThreadSizeAndDumpFileSize $lvrtConfigFile "ulimit -c" $2
-  else
-    SetThreadSizeAndDumpFileSize $lvrtConfigFile "ulimit -s" 256
-    SetThreadSizeAndDumpFileSize $lvrtConfigFile "ulimit -c" 4096
-  fi
-}
-undoAllOperation(){
-  UndoINIFile
-  UndoIncreaseThreadSizeAndDumpFileSize
-}
+
 
 # if [ $isUndoOperation = "false" ];then
 #   echo "false"
@@ -136,8 +141,8 @@ undoAllOperation(){
 #   echo "true"
 #   undoAllOperation
 # fi
-iniFilePath=$1
-IncreaseThreadSizeAndDumpFileSize
+# iniFilePath=$1
+# UndoIncreaseThreadSizeAndDumpFileSize
 #DisableINITokens numstatusitemstolog
 # CheckNIMaxINIFileAndUpdate $niMaxIniFile
 # IncreaseThreadSizeAndDumpFileSize
