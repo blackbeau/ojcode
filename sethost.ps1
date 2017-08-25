@@ -1,36 +1,28 @@
 <#
-
 .SYNOPSIS
-This is a simple Powershell script to explain how to create help
+This is a LabVIEW Troubleshooting Toolbox, you can find more information in DESCRIPTION.
 
-.DESCRIPTION
-The script itself will only print 'Hello World'. But that's cool. It's main objective is to show off the cool help thingy anyway.
-
-.EXAMPLE
-./HelloWorld.ps1
-
-.NOTES
-Put some notes here.
-
-.LINK
-http://kevinpelgrims.wordpress.com
-
+LVDiagTool.[ps1]
+      [-Configure {-TargetInfo {-Address <hostname-or-ip> | -UserName <username> | -Password <password>
+                                            | -SshPort <ssh-port>}
+                         |-LabVIEWInstallationFolder <FilePath>
+                         |-DefaultLogFileDropFolder <FilePath>}]
+      [-{Enable|Disable}DebugTokens { -All
+                                      |-HostMachine {All | DWarnDialogMultiples | PromoteDWarnInternals
+                                                    | DPrintfLogging | Debugging | NumStatusItemsToLog}
+                                      |-Target  {All | DWarnDialogMultiples | PromoteDWarnInternals
+                                                | DPrintfLogging | Debugging | NumStatusItemsToLog}]
+                                      |-NIMAX {All | SafeModeEnabled | SshdEnabled | ConsoleOutEnabled}}]
+      [-AdjustTargetUserLimit {-StackSize <Size> | -CoreDumpSize <Size>}]
+      [-FetchCoreDump]
+      [-GenerateReport {-HostTechReport | -TargetTechReport| -}]
+      [-Restart  {LabVIEW | Target | TargetRunTime}]
+      [-Help]
 #>
 
-
-#Param(
- #   [parameter(Mandatory=$true)] #(Mandatory=$true)
-  #  [alias("set")]
-  #  $Settarget,
-  #  [alias("tar")]
-  #  $Target,
-  #  [alias("pa")]
-
 Param(
-    [string]
-    [AllowEmptyString()]$test,
-    [switch][alias("enable")]$EnableDebugSettings,
-    [switch][alias("disable")]$DisableDebugSettings,
+    [switch][alias("enable")]$EnableDebugTokens,
+    [switch][alias("disable")]$DisableDebugTokens,
     [switch]$All,
     [string]$NIMAX,
     [string]$Target,
@@ -50,26 +42,45 @@ Param(
     [switch]$FetchCoreDump,
     [switch]$GenerateReport,
     [switch]$HostTechReport,
-    [switch]$TargetTechReport)
+    [switch]$TargetTechReport,
+    [switch]$Y,
+    [switch]$Help)
 
 $script:scriptPath = Split-Path -Parent $MyInvocation.MyCommand.Definition
-$script:setRTPath = $script:scriptPath+"/setRT.txt"
+$script:setRTPath = $script:scriptPath+"/setRT.sh"
+$script:helpContentPath = $script:scriptPath+"/HelpContent.txt"
 $script:setRTTempPath = $script:scriptPath+"/setRTTemp.txt"
+$script:utilityPath = $script:scriptPath+"/LVDiagToolsUtilities.ps1"
 $script:plinkPath = $script:scriptPath+"/plink.exe"
-$script:ConfigPath = $script:scriptPath+"/config.xml"
-$script:GenerateReportExe = $script:scriptPath+"/GenerateReport.exe"
-$script:ConfigTable = Import-Clixml $script:ConfigPath
-$script:TokensConstTable = @{
+$script:pscpPath = $script:scriptPath+"/pscp.exe"
+$script:configPath = $script:scriptPath+"/config.xml"
+$script:generateReportExe = $script:scriptPath+"/GenerateReport.exe"
+$script:configTable = Import-Clixml $script:configPath
+$script:tokensConstTable  = @{
   "DWarnDialogMultiples"  = @{$True="True";$False="False"};
   "promoteDWarnInternals" = @{$True="True";$False="False"};
   "DPrintfLogging"        = @{$True="True";$False="False"};
   "Debugging"             = @{$True="True";$False="False"};
   "numstatusitemstolog"   = @{$True="99999";$False="1000"};
 }
+$script:NIMAXTokenTable = @{
+  "SafeMode.enabled"    = "True"
+  "sshd.enabled"        = "True"
+  "ConsoleOut.enabled"  = "True"
+}
+$script:wrongTokenErrorMessage="Wrong Token, only DWarnDialogMultiples | PromoteDWarnInternals | DPrintfLogging | Debugging | NumStatusItemsToLog can set"
+$script:wrongNIMAXErrorMessage="Wrong Token, only SafeModeEnabled | SshdEnabled | ConsoleOutEnabled can set"
+. $script:utilityPath
 
-function SaveConfig()
+if($Help.isPresent)
 {
-    Export-Clixml -Path config.xml -InputObject $script:ConfigTable
+  Get-Content $script:helpContentPath
+  return
+}
+$confirmation = Read-Host "Are you Sure You Want To Proceed( Y or N ):"
+if (($confirmation -ne 'y') -and (-not $Y.isPresent))
+{
+  return
 }
 
 $script:OS=(Get-WmiObject Win32_OperatingSystem).osarchitecture
@@ -85,347 +96,231 @@ Else
     $script:iniFilePrefix="C:\Program Files (x86)\National Instruments\"
 }
 
-$script:labViewVersion=(Get-ChildItem  $script:iniFilePrefix | Select-Object -Property Name | findstr LabVIEW)[-1].TrimEnd()
+
+if($script:configTable["LabVIEWInstallationFolder"])
+{
+  $script:labViewVersion=($script:configTable["LabVIEWInstallationFolder"].split("\") | findstr LabVIEW).TrimEnd()
+}
+else
+{
+  $script:labViewVersion=(Get-ChildItem  $script:iniFilePrefix | Select-Object -Property Name | findstr LabVIEW)[-1].TrimEnd()
+}
 
 if($script:labViewVersion.split(" ")[-1].CompareTo("2014") -eq 1)
 {
     Write-Debug "LV 2015 and newer"
     $script:bashIniFile="/etc/natinst/share/lvrt.conf"
 }
-Else
+else
 {
     Write-Debug "LV 2014 and older"
     $script:bashIniFile="/etc/natinst/share/ni-rt.ini"
 }
 Write-Debug ("LabVIEW version: "+$script:labViewVersion.split(" ")[-1])
-#(Get-Content $script:setRTPath ) | Foreach-Object {
-#
-#           if($_ -match "^iniFile=")
+
+
+if( -not $script:configTable["LabVIEWInstallationFolder"])
+{
+  $script:configTable["LabVIEWInstallationFolder"]=$script:iniFilePrefix+$script:labViewVersion
+}
+
+if( -not $script:configTable["DefaultLogFileDropFolder"])
+{
+  $script:configTable["DefaultLogFileDropFolder"]="c:\temp"
+}
+
+$script:iniFilePath=$script:configTable["LabVIEWInstallationFolder"]+"\LabVIEW.ini"
+Write-Debug ("Ini file path: "+$script:iniFilePath)
+
+$script:iniTempFilePath=$script:configTable["LabVIEWInstallationFolder"]+"\temp"
+New-Item $script:iniTempFilePath -force -type file | Out-Null
+
+$script:LabVIEWExecutePath=$script:configTable["LabVIEWInstallationFolder"]+"\LabVIEW.exe"
+
+
+#function AddIniTokenToTempFile($token,$value,$isinsert)
+#{
+#$isTokenFind=$FALSE
+#if($isinsert){$matchRegex="\[LabVIEW\]"}
+#else {$matchRegex=$token}
+#( Get-Content  $script:iniTempFilePath  -ErrorAction Stop ) |  Foreach-Object {
+#           if($_ -match "^"+$matchRegex)
 #           {
 #                #Add Lines after the selected pattern
-#                "iniFile="+$script:bashIniFile
+#                if($isinsert){$_}
+#                $token+"="+$value
+#                $isTokenFind=$TRUE
 #           }
 #           else
 #           {
-#           $_
+#                $_
 #           }
-# } | Set-Content $script:setRTPath
-
-if( -not $script:ConfigTable["LabVIEWInstallationFolder"])
-{
-  $script:ConfigTable["LabVIEWInstallationFolder"]=$script:iniFilePrefix+$script:labViewVersion
-}
-
-if( -not $script:ConfigTable["DefaultLogFileDropFolder"])
-{
-  $script:ConfigTable["DefaultLogFileDropFolder"]="c:\temp"
-}
-
-$script:iniFilePath=$script:ConfigTable["LabVIEWInstallationFolder"]+"\LabVIEW.ini"
-Write-Debug ("Ini file path: "+$script:iniFilePath)
-
-$script:iniTempFilePath=$script:ConfigTable["LabVIEWInstallationFolder"]+"\temp"
-New-Item $script:iniTempFilePath -force -type file | Out-Null
-
-$script:LabVIEWExecutePath=$script:ConfigTable["LabVIEWInstallationFolder"]+"\LabVIEW.exe"
-
-#function GetTokenLine($token)
-#{
-#   $findAns=(cat $script:iniFilePath | findstr -N $token )
-#   if ( $findAns -eq $null )
-#   {
-#      return 0
-#   }
-#   else
-#   {
-#      return $findAns.split(":")[0]
-#   }
-#
+#  } | Set-Content $script:iniTempFilePath  -ErrorAction Stop
+# return $isTokenFind
 #}
 #
-#function AddIniToken($token,$value)
+#function AddOneToken($token,$value)
 #{
-#    $tokenAlreadyExistLineNumber =(GetTokenLine $token)
-#    #echo "$defaultLineNumberToInsert,??,$tokenLineNumber"
-#    if($tokenAlreadyExistLineNumber -eq 0)
+#    if( -not  (AddIniTokenToTempFile $token $value $false)  )
 #    {
-#     $tokenToAdd.add($token+"="+$value)
-#     #$fileArrayList.insert($defaultLineNumberToInsert,$token+"="+$value)
+#      AddIniTokenToTempFile $token $value $true >$null
+#    }
+#}
+#
+#function CheckINIFileAndUpdate($tokenTable,$enable)
+#{
+# try
+#   {
+#    Get-Content  $script:iniFilePath -ErrorAction Stop | Set-Content $script:iniTempFilePath -ErrorAction Stop
+#
+#    foreach($token in $tokenTable.keys)
+#    {
+#    AddOneToken $token $tokenTable[$token][$enable]
+#    }
+#
+#    cp $script:iniTempFilePath $script:iniFilePath -ErrorAction Stop
+#    Write-Debug ("Write temp back to ini file: "+$?)
+#   }
+# catch [Exception]
+#   {
+#    Write-Host $_.Exception.ToString()
+#   }
+# finally
+#   {
+#    Remove-Item $script:iniTempFilePath
+#   }
+#}
+#
+#function GetPasswordArg()
+#{
+#  if($script:configTable["Password"])
+#  {
+#    return "-pw",$script:configTable["Password"]
+#  }
+#  else
+#  {
+#    return ""
+#  }
+#}
+#function GetSSHAddress()
+#{
+#  if($script:configTable["UserName"])
+#  {
+#    return $script:configTable["UserName"]+"@"+$script:configTable["Address"]
+#  }
+#  else
+#  {
+#    return $script:configTable["Address"]
+#  }
+#}
+#
+#function ValidateSSHAdress($func)
+#{
+#    if($script:configTable["Address"])
+#    {
+#        Write-Output "Connecting to $(GetSSHAddress)......"
+#        & $func $args
 #    }
 #    else
 #    {
-#     $fileArrayList[$tokenAlreadyExistLineNumber-1] = $token+"="+$value
+#        Write-Output "-TargetAdress is needed you should use -Configure to set it,for more details use get-help"
+#        Exit 1
 #    }
 #}
 #
-#function CheckINIFileAndUpdate()
+#function RestartTargetRunTime()
 #{
-#  try
+#  RunCommandOnTarget "/etc/init.d/nilvrt restart"
+#  Write-Output "Resart LVRT is ok!"
+#}
+#function RestartTarget()
+#{
+#  RunCommandOnTarget "reboot"
+#  Write-Output "Wating for reboot!"
+#  if( (Test-Connection -quiet $script:configTable["Address"] -delay 10 -count 3) -or
+#      (Test-Connection -quiet $script:configTable["Address"] -delay 10 -count 4) )
+#  {
+#      Write-Output "Reboot done."
+#      return
+#  }
+#  Write-Output "Timeout(70s) to reconnect to the target. Please check the target."
+#  Exit 1
+#}
+#function RestartLabVIEW()
+#{
+#  $labviewProcess = Get-Process -Name LabVIEW
+#  if($labviewProcess)
+#  {
+#    Stop-Process -InputObject $labviewProcess
+#  }
+#  else
+#  {
+#    Write-Output "LabVIEW seems not running, we start it now"
+#  }
+#  Start-Process $script:LabVIEWExecutePath
+#}
+#
+#function PrepareForSetRTTempfile()
+#{
+#  Copy-Item $script:setRTPath $script:setRTTempPath -force
+#  Add-Content $script:setRTTempPath "iniFile=`"$script:bashIniFile`""
+#}
+#function UpdateTokensOnTarget()
+#{
+#   & $script:plinkPath -ssh $(GetSSHAddress) $(GetPasswordArg) -m $script:setRTTempPath | Write-Output
+#   if(-not $?)
 #   {
-#    $tokenToAdd = New-Object System.Collections.ArrayList
-#    $fileArrayList=[System.Collections.ArrayList](cat $script:iniFilePath -ErrorAction Stop  )
-#    $defaultLineNumberToInsert=(GetTokenLine \[LabVIEW\])
-#    AddIniToken  DWarnDialogMultiples True
-#    AddIniToken  promoteDWarnInternals True
-#    AddIniToken  DPrintfLogging True
-#    AddIniToken  Debugging True
-#    AddIniToken  numstatusitemstolog 99999
-#    $fileArrayList.insert($defaultLineNumberToInsert,$tokenToAdd)
-#    $fileArrayList | % {$_ | Out-File -append  $script:iniTempFilePath}
-#    Write-Debug ("Write ini to temp file: "+$?)
-#    cp $script:iniTempFilePath $script:iniFilePath
-#    Write-Debug ("Write temp back to ini file: "+$?)
-#    }
-#  catch [Exception]
-#    {
-#    Write-Host $_.Exception.ToString()
-#    }
-#  finally
-#    {
-#    Remove-Item $script:iniTempFilePath
-#    }
+#     Exit 1
+#   }
 #}
-#
-#function UndoINIFileAndUpdate
+#function RunCommandOnTarget($command)
 #{
-#  try
-#   {
-#    Get-Content $script:iniFilePath -ErrorAction Stop |  Foreach-Object {
-#
-#           if($_ -match "^(?!((^DWarnDialogMultiples)|(^promoteDWarnInternals)|(^DPrintfLogging)|(^Debugging)|(^numstatusitemstolog)))")
-#           {
-#               $_
-#           }
-#         } | Set-Content  $script:iniTempFilePath -ErrorAction Stop
-#    cp $script:iniTempFilePath $script:iniFilePath -ErrorAction Stop
-#    Write-Debug ("Write temp back to ini file: "+$?)
-#    }
-#  catch [Exception]
-#    {
-#    Write-Host $_.Exception.ToString()
-#    }
-#  finally
-#    {
-#    Remove-Item $script:iniTempFilePath
-#    }
+#  & $script:plinkPath -ssh $(GetSSHAddress) $(GetPasswordArg) $command 2>&1 | Write-Output
+#  if(-not $?)
+#  {
+#    Exit 1
+#  }
 #}
-
-#UndoINIFileAndUpdate
-
-function AddIniTokenToTempFile($token,$value,$isinsert)
-{
-$isTokenFind=$FALSE
-if($isinsert){$matchRegex="\[LabVIEW\]"}
-else {$matchRegex=$token}
-( Get-Content  $script:iniTempFilePath  -ErrorAction Stop ) |  Foreach-Object {
-           if($_ -match "^"+$matchRegex)
-           {
-                #Add Lines after the selected pattern
-                if($isinsert){$_}
-                $token+"="+$value
-                $isTokenFind=$TRUE
-           }
-           else
-           {
-                $_
-           }
-  } | Set-Content $script:iniTempFilePath  -ErrorAction Stop
- return $isTokenFind
-}
-
-function AddOneToken($token,$value)
-{
-    #$re =  AddIniTokenToTempFile $token $value $false
-    if( -not  (AddIniTokenToTempFile $token $value $false)  )
-    {
-      AddIniTokenToTempFile $token $value $true >$null
-    }
-}
-
-function CheckINIFileAndUpdateV2($tokenTable,$enable)
-{
- try
-   {
-
-    Get-Content  $script:iniFilePath -ErrorAction Stop | Set-Content $script:iniTempFilePath -ErrorAction Stop
-
-    foreach($token in $tokenTable.keys)
-    {
-    AddOneToken $token $tokenTable[$token][$enable]
-    }
-
-    #AddOneToken  DWarnDialogMultiples $iniTokenFlag
-    #
-    #AddOneToken  promoteDWarnInternals $iniTokenFlag
-    #
-    #AddOneToken  DPrintfLogging $iniTokenFlag
-    #
-    #AddOneToken  Debugging $iniTokenFlag
-    #
-    #AddOneToken  numstatusitemstolog $iniTokenNum
-
-    cp $script:iniTempFilePath $script:iniFilePath -ErrorAction Stop
-    Write-Debug ("Write temp back to ini file: "+$?)
-   }
- catch [Exception]
-   {
-    Write-Host $_.Exception.ToString()
-   }
- finally
-   {
-    Remove-Item $script:iniTempFilePath
-   }
-}
-
-#CheckINIFileAndUpdateV2 $false
-#CheckINIFileAndUpdate
-#./plink -ssh admin@10.144.16.189  -m shc.txt
-#foreach ($line in $fileArrayList)
+#function CheckToken($token)
 #{
-#   #echo $line
-#    $line | Out-File -append  $script:iniTempFilePath
+#  if($script:tokensConstTable.ContainsKey("$token"))
+#  {
+#    return $True
+#  }
+#  else
+#  {
+#    return $True
+#  }
 #}
-
-#if($Settarget.Equals("all"))
-#{
-#    Write-Debug "set both host and target"
-#    CheckINIFileAndUpdate
-#    ./plink -ssh $target  -m setRT.txt
-#}
-#elseif($Settarget.Equals("host"))
-#{
- #   Write-Debug "set only on host"
- #   CheckINIFileAndUpdate
-#}
-#else
-#{
-#    Write-Debug "set only on target"
-#    ./plink -ssh $target  -m setRT.txt
-#}
-function GetPasswordArg()
-{
-  if($script:ConfigTable["Password"])
-  {
-    return "-pw",$script:ConfigTable["Password"]
-  }
-  else{
-    return ""
-  }
-}
-function GetSSHAddress()
-{
-  if($script:ConfigTable["UserName"])
-  {
-    return $script:ConfigTable["UserName"]+"@"+$script:ConfigTable["Address"]
-  }
-  else
-  {
-    return $script:ConfigTable["Address"]
-  }
-}
-
-function ValidateSSHAdress($func)
-{
-if($script:ConfigTable["Address"])
-    {
-        & $func
-    }
-    else
-    {
-        echo "`n-SSHAdress is needed to specify target address( like -SSHAdress root@192.168.1.1 ),for more details use get-help"
-    }
-}
-
-function RestartTargetRunTime()
-{
-     & $script:plinkPath -ssh $(GetSSHAddress) $(GetPasswordArg) "/etc/init.d/nilvrt restart"
-        if($?)
-        {
-            echo "`nResart LVRT is ok!"
-        }
-        else
-        {
-            echo "`nResart LVRT is failed, please retry!"
-        }
-}
-function RestartTarget()
-{
-    & $script:plinkPath -ssh $(GetSSHAddress) $(GetPasswordArg) reboot
-    if($?)
-    {
-      echo "`nWating for reboot!"
-      if( (Test-Connection -quiet $script:ConfigTable["Address"] -delay 10 -count 3) -or
-           (Test-Connection -quiet $script:ConfigTable["Address"] -delay 10 -count 4) )
-      {
-          echo "`nReboot is ok!"
-          return
-      }
-    }
-    echo "`nReboot target is failed, please retry!"
-}
-function RestartLabVIEW()
-{
-  $labviewProcess = Get-Process -Name LabVIEW
-  if($labviewProcess)
-  {
-    Stop-Process -InputObject $labviewProcess
-  }
-  else
-  {
-    echo "LabVIEW seems not running, we start it now"
-  }
-  Start-Process $script:LabVIEWExecutePath
-}
-
-function prepareForSetRTTempfile()
-{
-  Copy-Item $script:setRTPath $script:setRTTempPath -force
-  Add-Content $script:setRTTempPath "iniFile=`"$script:bashIniFile`""
-}
-function updateTokensOnTarget()
-{
-   & $script:plinkPath -ssh $(GetSSHAddress) $(GetPasswordArg) -m $script:setRTTempPath
-}
-#if($RebootRT.isPresent)
-#{
-#  ValidateSSHAdress RestartTarget
-#  return
-#}
-#
-#if($ResartLVRT.isPresent)
-#{
-#  ValidateSSHAdress RestartTargetRunTime
-#  return
-#}
-prepareForSetRTTempfile
+PrepareForSetRTTempfile
 if($Configure.isPresent)
 {
   if($TargetInfo.isPresent)
   {
    if($Address)
     {
-    $script:ConfigTable["Address"]=$Address
+    $script:configTable["Address"]=$Address
     }
     if($UserName)
     {
-    $script:ConfigTable["UserName"]=$UserName
+    $script:configTable["UserName"]=$UserName
     }
     if($Password)
     {
-    $script:ConfigTable["Password"]=$Password
+    $script:configTable["Password"]=$Password
     }
     if($SshPort)
     {
-    $script:ConfigTable["SshPort"]=$SshPort
+    $script:configTable["SshPort"]=$SshPort
     }
   }
   if($LabVIEWInstallationFolder)
   {
-  $script:ConfigTable["LabVIEWInstallationFolder"]=$LabVIEWInstallationFolder
+  $script:configTable["LabVIEWInstallationFolder"]=$LabVIEWInstallationFolder
   }
   if($DefaultLogFileDropFolder)
   {
-  $script:ConfigTable["DefaultLogFileDropFolder"]=$DefaultLogFileDropFolder
+  $script:configTable["DefaultLogFileDropFolder"]=$DefaultLogFileDropFolder
   }
   SaveConfig
 }
@@ -435,21 +330,27 @@ if($Restart)
   switch($Restart)
   {
     "LabVIEW"       {RestartLabVIEW; break;}
-    "Target"        {ValidateSSHAdress RestartTarget; break;}
-    "TargetRunTime" {ValidateSSHAdress RestartTargetRunTime; break;}
+    "Target"        {ValidateSSHAdress RestartTarget | Out-Null ; break;}
+    "TargetRunTime" {ValidateSSHAdress RestartTargetRunTime | Out-Null ; break;}
   }
 }
-if($EnableDebugSettings.isPresent)
+
+if($EnableDebugTokens.isPresent)
 {
-  if($HostMachine){
+  if($HostMachine)
+  {
     if($HostMachine -eq "All")
     {
-      CheckINIFileAndUpdateV2 $script:TokensConstTable $True
-
+      CheckINIFileAndUpdate $script:tokensConstTable $True
+    }
+    elseif($script:tokensConstTable.ContainsKey("$HostMachine"))
+    {
+      CheckINIFileAndUpdate @{$HostMachine=$script:tokensConstTable[$HostMachine]} $True
     }
     else
     {
-      CheckINIFileAndUpdateV2 @{$HostMachine=$script:TokensConstTable[$HostMachine]} $True # todo check tokens add plink
+      Write-Output $script:wrongTokenErrorMessage
+      return
     }
   }
   elseif($Target)
@@ -458,44 +359,59 @@ if($EnableDebugSettings.isPresent)
     {
       Add-Content $script:setRTTempPath "EnableINITokens"
     }
-    else
+    elseif($script:tokensConstTable.ContainsKey("$Target"))
     {
       Add-Content $script:setRTTempPath "EnableINITokens $Target"
     }
-    ValidateSSHAdress updateTokensOnTarget
+    else
+    {
+        Write-Output $script:wrongTokenErrorMessage
+        return
+    }
+    ValidateSSHAdress UpdateTokensOnTarget | Out-Null
   }
   elseif($NIMAX){
     if($NIMAX -eq "All")
     {
       Add-Content $script:setRTTempPath "EnableNiMaxTokens"
     }
-    else
+    elseif($script:NIMAXTokenTable.ContainsKey("$NIMAX"))
     {
       Add-Content $script:setRTTempPath "EnableNiMaxTokens $NIMAX"
     }
-    ValidateSSHAdress updateTokensOnTarget
+    else
+    {
+      Write-Output $script:wrongNIMAXErrorMessage
+      return
+    }
+    ValidateSSHAdress UpdateTokensOnTarget | Out-Null
   }
   elseif($ALL.isPresent)
   {
-    CheckINIFileAndUpdateV2 $script:TokensConstTable $True
+    CheckINIFileAndUpdate $script:tokensConstTable $True
     Add-Content $script:setRTTempPath "EnableINITokens"
     Add-Content $script:setRTTempPath "EnableNiMaxTokens"
-    ValidateSSHAdress updateTokensOnTarget
+    ValidateSSHAdress UpdateTokensOnTarget | Out-Null
   }
 }
 
 
-if($DisableDebugSettings.isPresent)
+if($DisableDebugTokens.isPresent)
 {
-  if($HostMachine){
+  if($HostMachine)
+  {
     if($HostMachine -eq "All")
     {
-      CheckINIFileAndUpdateV2 $script:TokensConstTable $False
-
+      CheckINIFileAndUpdate $script:tokensConstTable $False
+    }
+    elseif($script:tokensConstTable.ContainsKey("$HostMachine"))
+    {
+      CheckINIFileAndUpdate @{$HostMachine=$script:tokensConstTable[$HostMachine]} $False
     }
     else
     {
-      CheckINIFileAndUpdateV2 @{$HostMachine=$script:TokensConstTable[$HostMachine]} $False # todo check tokens add plink
+      Write-Output $script:wrongTokenErrorMessage
+      return
     }
   }
   elseif($Target)
@@ -504,31 +420,40 @@ if($DisableDebugSettings.isPresent)
     {
       Add-Content $script:setRTTempPath "DisableINITokens"
     }
-    else
+    elseif($script:tokensConstTable.ContainsKey("$Target"))
     {
       Add-Content $script:setRTTempPath "DisableINITokens $Target"
     }
-    ValidateSSHAdress updateTokensOnTarget
+    else
+    {
+        Write-Output $script:wrongTokenErrorMessage
+        return
+    }
+    ValidateSSHAdress UpdateTokensOnTarget | Out-Null
   }
   elseif($NIMAX){
     if($NIMAX -eq "All")
     {
       Add-Content $script:setRTTempPath "DisableNiMaxTokens"
     }
-    else
+    elseif($script:NIMAXTokenTable.ContainsKey("$NIMAX"))
     {
       Add-Content $script:setRTTempPath "DisableNiMaxTokens $NIMAX"
     }
-    ValidateSSHAdress updateTokensOnTarget
+    else
+    {
+      Write-Output $script:wrongNIMAXErrorMessage
+      return
+    }
+    ValidateSSHAdress UpdateTokensOnTarget | Out-Null
   }
   elseif($ALL.isPresent)
   {
-    CheckINIFileAndUpdateV2 $script:TokensConstTable $False
+    CheckINIFileAndUpdate $script:tokensConstTable $False
     Add-Content $script:setRTTempPath "DisableINITokens"
     Add-Content $script:setRTTempPath "DisableNiMaxTokens"
-    ValidateSSHAdress updateTokensOnTarget
+    ValidateSSHAdress UpdateTokensOnTarget | Out-Null
   }
-
 }
 
 if($AdjustTargetUserLimit.isPresent)
@@ -543,32 +468,56 @@ if($AdjustTargetUserLimit.isPresent)
   }
   else
   {
-    echo "-StackSize or -CoreDumpSize should be set."
+    Write-Output "-StackSize or -CoreDumpSize should be set."
+    return
   }
+  ValidateSSHAdress UpdateTokensOnTarget | Out-Null
 }
 if($FetchCoreDump.isPresent)
 {
-    & $script:plinkPath -ssh $(GetSSHAddress) $(GetPasswordArg) "ls /var/local/natinst/log/core_dump.\!usr\!local\!natinst\!labview\!lvrt"
-    if($?){
-      & $script:plinkPath -ssh $(GetSSHAddress) $(GetPasswordArg) "tar -cf myCoreDump.tar core_dump.\!usr\!local\!natinst\!labview\!lvrt"
-      & $script:pscpPath $(GetSSHAddress)":/var/local/natinst/log/myCoreDump.tar" $script:ConfigTable["DefaultLogFileDropFolder"]
+    ValidateSSHAdress RunCommandOnTarget "cd /var/local/natinst/log/ && tar -cf myCoreDump.tar core_dump.\!usr\!local\!natinst\!labview\!lvrt"
+    & $script:pscpPath ($(GetSSHAddress)+":/var/local/natinst/log/myCoreDump.tar") $script:configTable["DefaultLogFileDropFolder"] | Write-Output
+    if(-not $?)
+    {
+      Exit 1
     }
 }
+#function CheckExistAndRename($path,$name)
+#{
+#  if(Test-Path $path)
+#  {
+#    Move-Item $path ((Split-Path -Path D:\tempHostNiMAXReport.zip -parent )+$name) -force
+#  }
+#  else
+#  {
+#    Write-Output "Generate $name failed"
+#    Exit 1
+#  }
+#}
 if($GenerateReport.isPresent)
 {
-    $hostReportSavePath = Join-Path -path $script:ConfigTable["DefaultLogFileDropFolder"] -ChildPath "\HostNiMAXReport.zip"
-    $targetReportSavePath = Join-Path -path $script:ConfigTable["DefaultLogFileDropFolder"] -ChildPath "\TargetNiMAXReport.zip"
+    $hostReportTempPath = Join-Path -path $script:configTable["DefaultLogFileDropFolder"] -ChildPath "tempHostNiMAXReport.zip"
+    $targetReportTempPath = Join-Path -path $script:configTable["DefaultLogFileDropFolder"] -ChildPath "tempTargetNiMAXReport.zip"
+
     if($TargetTechReport.isPresent)
     {
-      & $script:GenerateReportExe $script:ConfigTable["Address"] $targetReportSavePath　#todo
+      & $script:generateReportExe $script:configTable["Address"] $targetReportTempPath | Out-Null
+      CheckExistAndRename $targetReportTempPath "TargetNiMAXReport.zip"
     }
     elseif($HostTechReport.isPresent)
     {
-      & $script:GenerateReportExe localhost $hostReportSavePath  #todo
+      & $script:generateReportExe localhost $hostReportTempPath | Out-Null
+      CheckExistAndRename $hostReportTempPath "HostNiMAXReport.zip"
     }
     else
     {
-      & $script:GenerateReportExe $script:ConfigTable["Address"] $targetReportSavePath　#todo check file get ok
-      & $script:GenerateReportExe localhost $hostReportSavePath  #todo
+      & $script:generateReportExe $script:configTable["Address"] $targetReportSavePath | Out-Null
+      CheckExistAndRename $targetReportTempPath "TargetNiMAXReport.zip"
+      & $script:generateReportExe localhost $hostReportSavePath | Out-Null
+      CheckExistAndRename $hostReportTempPath "HostNiMAXReport.zip"
     }
+}
+if(Test-Path $script:setRTTempPath)
+{
+  Remove-Item $script:setRTTempPath
 }
