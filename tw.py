@@ -1,26 +1,12 @@
 # -*- coding: utf-8 -*-
 """
-Spyder Editor
-
-This is a temporary script file.
-"""
-
-# -*- coding: utf-8 -*-
-"""
-Created on Mon Dec 25 15:16:09 2017
-@author: KaiYang
-"""
-
-# -*- coding: utf-8 -*-
-"""
 Created on Wed Dec 20 17:30:40 2017
 @author: KaiYang
 """
 import copy
-import os
 class PyLuaTblParser:
     def __init__(self):
-        self._indict={}
+        self._indict= {'islist':False,'data':{}}
     def load(self, s):
         self.at = 1
         self.s = s
@@ -29,22 +15,27 @@ class PyLuaTblParser:
             self._indict=self._myparse()
         else:
             raise NameError('not dict')
-#        return self._indict
+        if self._indict is None:
+            raise NameError('not dict')
+        return self._indict
     def _myparse(self):
         re = {'islist':True,'data':{}}
         inner_id=1
         last_tk=None
         tk=self._gettoken()
-        while tk[1]:
+        while tk:
             #print tk,self.at,self.ch,last_tk
             if tk[0] == 'token':
                 if tk[1] == '{':
                     re['data'][inner_id]=self._myparse()
+                    #if re['data'][inner_id] != None:
                     inner_id += 1
                     tk=self._gettoken()
                 elif tk[1]=='}':
                     if last_tk:
+                        #if last_tk[1] != None:
                         re['data'][inner_id] = last_tk[1]
+                        #re['data'][inner_id] != None:
                         inner_id += 1
                     # tk=self._gettoken()
                     return re
@@ -53,7 +44,7 @@ class PyLuaTblParser:
                     last_tk = tk
                     tk=self._gettoken()
                     if tk[1] != ']':
-                        print self.at
+                        #print self.at
                         raise NameError('parse ] error')
                     #todo assert
                     tk=self._gettoken()
@@ -74,7 +65,9 @@ class PyLuaTblParser:
                         raise NameError('last_tk None')
                     #todo assert
                     if last_tk != None:
+                        #if last_tk[1] != None:
                         re['data'][inner_id] = last_tk[1]
+                        #if re['data'][inner_id] != None:
                         inner_id += 1
                     last_tk = None
                     tk=self._gettoken()
@@ -117,8 +110,10 @@ class PyLuaTblParser:
                     self._nextchar()
                     return ('string',re)
                 if self.ch == '"' and last == '\\':
-                    re=re[:-1]
+                    #re=re[:-1]
+                    pass
                 if self.ch == '\\' and last == '\\':
+                    #re=re[:-1]
                     re+=self.ch
                     last=None
                     continue
@@ -155,21 +150,34 @@ class PyLuaTblParser:
         re=''
         re+='{'
         for k in obj['data']:
-            if isinstance(k,(int,float)):
-                re+='['+str(k)+']='
-            else:
-                re+='["'+str(k)+'"]='
-            if isinstance(obj['data'][k],(int,float)):
+            if obj['islist'] == False:
+                #print obj['islist'] ,type(obj['data'][k])
+                if isinstance(k,(int,float)):
+                    re+='['+str(k)+']='
+                else:
+                    re+='["'+str(k)+'"]='
+            if type(obj['data'][k]) in (float,int):
+                #print obj['data'][k],type(obj['data'][k])
                 re+=str(obj['data'][k])
             elif isinstance(obj['data'][k],dict):
                 re+=self._mydump(obj['data'][k])
             else:
-                re+='"'+str(boolAndNone.get(obj['data'][k],obj['data'][k]))+'"'
+                if obj['data'][k] in boolAndNone:
+                    #print boolAndNone[obj['data'][k]]
+                    re+=boolAndNone[obj['data'][k]]
+                    
+                else:   
+                    #print obj['data'][k],type(obj['data'][k])
+                    re+='"'+str(obj['data'][k])+'"'
             re+=','
         re+='}'
         return re
     def loadDict(self,d):
-        self._indict=self._myLoadDict(copy.deepcopy(d))
+        #d={'root': {96: [[], 1, 2, None], 97: [[], []], 98: [[]], 99: -42, 4: True, 5: False, 1: 'Test Pattern String', 8: 0.5, 9: 3.141592653589793e+64, 10: 3.141592653589793, 7: {'comment': '// /* <!-- --', 'slash': '/ & \\', 'luatext': '{"object with 1 member" = {"array with 1 element"}}', 'hex': '0x01230x45670x89AB0xCDEF0xabcd0xef4A', 'object': [], '\\"\x08\x0c\n\r\t`1~!@#$%^&*()_+-=[]{}|;:\',./<>?': 'A key can be any string', 'integer': 1234567890, 'space': ' ', 'controls': '\x08\x0c\n\r\t', 'quote': '"', 'alpha': 'abcdefghijklmnopqrstuvwyz', 'E': 1.23456789e+34, ' s p a c e d ': [1, 2, 3, 4, 5, 6, 7], 'compact': [1, 2, 3, 4, 5, 6, 7], 'one': 1, 'array': [None, None], '# -- --> */': ' ', 'ALPHA': 'ABCDEFGHIJKLMNOPQRSTUVWYZ', 'e': 1.23456789e-13, 'digit': '0123456789', 'false': False, 'url': 'http://www.JSON.org/', 'backslash': '\\', 'special': "`1~!@#$%^&*()_+-={':[,]}|;.</>?", 'real': -9876.54321, 'true': True, 'quotes': '&#34; (0x0022) %22 0x22 034 &#x22;', 'address': '50 St. James Street', 'zero': 0}, 12: 'rosebud', 2: {'object with 1 member': ['array with 1 element']}, 11: 1066, 3: [], 94: {'3': 3, 1: {'1': 1, '2': 2}, 2: {'2': 2, 1: 1}}, 95: [1, 2, {'1': 1}]}}
+        if isinstance(d,(dict)):
+            self._indict=self._myLoadDict(copy.deepcopy(d))
+        else:
+            raise NameError('not dict')
     def _myLoadDict(self,obj):
         if not isinstance(obj,(dict,list)):
             return obj
@@ -177,12 +185,12 @@ class PyLuaTblParser:
         if isinstance(obj,(dict)):
             re['islist']=False
             for k in obj:
-                if isinstance(k,(str,int,float)):
+                if type(k) in (str,float,int):
                     re['data'][k]=self._myLoadDict(obj[k])
         else:
             id=1
             for k in obj:
-                if isinstance(k,(str,int,float)):
+                if type(k) in (str,float,int):
                     re['data'][id]=self._myLoadDict(k)
                     id+=1
         return re
@@ -201,7 +209,8 @@ class PyLuaTblParser:
             for k in obj['data']:
                 if obj['data'][k] != None:
                     re[k]=self._myDumpDict(obj['data'][k])
-        return re              
+        return re        
+                  
     def loadLuaTable(self,f):
         with open(f) as fi:
              self.load(fi.read())
